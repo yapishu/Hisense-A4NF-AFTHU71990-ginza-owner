@@ -3,7 +3,8 @@
 The policy keeps the TV's core display, input, network, settings, tuner,
 streaming, and root functions while removing the Amazon home screen and its
 advertising, recommendations, telemetry, retail, Alexa, and update clients.
-LTvLauncher is the HOME activity.
+LTvLauncher is the HOME activity. The Fire TV YouTube receiver remains
+installed so YouTube DIAL/cast requests can launch and play on the TV.
 
 [`packages.txt`](packages.txt) contains 68 package or component targets. The
 root app stores a validated copy in device-protected storage and applies it
@@ -23,10 +24,16 @@ remain on the read-only partition and `restore.sh` returns them with
 
 ## Apply
 
-The apply script downloads the pinned ARMv7 LTvLauncher release when needed,
-verifies its SHA-256 digest, installs it, provisions the persistent policy,
-applies the live package state through the root SSH service, freezes
-`update_engine`, and selects LTvLauncher as HOME.
+The apply script downloads the pinned ARMv7 LTvLauncher and Fire TV YouTube
+builds when needed, verifies their SHA-256 digests, installs them, provisions
+the persistent policy, applies the live package state through the root SSH
+service, freezes `update_engine`, and selects LTvLauncher as HOME.
+
+The YouTube receiver is `com.amazon.firetv.youtube` version
+`25.30.r1.v162.0` (`325311620`). Its APK is ARMv7, has SHA-256
+`0f8ad0f9a0b2b77444cf0a13397de7abcaa3f482f908163448967b0f899931cc`,
+and carries the Google LLC signing certificate with SHA-256
+`21bd252aa5d6f8fa71792a430f7e9c1bf6b71797b8c5a5033f806036f46f0c49`.
 
 The defaults match the deployed TV and local automation key:
 
@@ -48,6 +55,7 @@ The script accepts these environment variables:
 | `GINZA_DEBLOAT_POLICY` | `debloat/packages.txt` |
 | `GINZA_UNINSTALL_POLICY` | `debloat/uninstall-packages.txt` |
 | `GINZA_LAUNCHER_APK` | pinned launcher beside the script |
+| `GINZA_YOUTUBE_APK` | pinned Fire TV YouTube APK beside the script |
 
 The configured known-hosts file must contain the TV's persistent Dropbear host
 key. The verified Ed25519 fingerprint is:

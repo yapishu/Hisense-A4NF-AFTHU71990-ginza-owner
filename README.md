@@ -127,8 +127,9 @@ CapAmb: 000001ffffffffff
 
 ## Debloat and update blocking
 
-The deployed TV uses LTvLauncher as HOME and keeps Netflix, Jellyfin, AirPlay,
-the tuner/operator app, Files, QuickSettings, and the root service available.
+The deployed TV uses LTvLauncher as HOME and keeps Netflix, Jellyfin, YouTube,
+YouTube casting, AirPlay, the tuner/operator app, Files, QuickSettings, and the
+root service available.
 The persistent policy disables 68 Amazon OTA, launcher, advertising,
 recommendation, retail, telemetry, Alexa, smart-home, and synchronization
 targets. It also stops `update_engine` at every successful root startup.

@@ -5,6 +5,7 @@ project_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 policy=${GINZA_DEBLOAT_POLICY:-$project_dir/packages.txt}
 uninstall_policy=${GINZA_UNINSTALL_POLICY:-$project_dir/uninstall-packages.txt}
 launcher=${GINZA_LAUNCHER_APK:-$project_dir/LTvLauncher-armeabi-v7a-release.apk}
+youtube=${GINZA_YOUTUBE_APK:-$project_dir/YouTube-FireTV-25.30.r1.v162.0.apk}
 adb_bin=${ADB:-adb}
 adb_server_port=${ADB_SERVER_PORT:-5037}
 adb_serial=${ADB_SERIAL:-10.10.8.53:5555}
@@ -24,8 +25,12 @@ done
 if [ ! -f "$launcher" ]; then
   "$project_dir/fetch_launcher.sh" "$launcher"
 fi
+if [ ! -f "$youtube" ]; then
+  "$project_dir/fetch_youtube.sh" "$youtube"
+fi
 
 encoded=$(base64 "$policy" | tr -d '\n')
+"$adb_bin" -P "$adb_server_port" -s "$adb_serial" install -r "$youtube"
 "$adb_bin" -P "$adb_server_port" -s "$adb_serial" install -r "$launcher"
 "$adb_bin" -P "$adb_server_port" -s "$adb_serial" shell am start-foreground-service \
   -n "$service" \
