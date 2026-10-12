@@ -70,11 +70,13 @@ ZIG=/path/to/zig ./tools/build_ginza_mali_38181.sh ./ginza_mali_38181
 ## Install
 
 Enable ADB debugging and connect to the TV. Put the public keys that may log in
-into one file, one OpenSSH public key per line. The deployed TV uses exactly
-these two entries:
+into one file, one OpenSSH public key per line. The installer accepts 1 to 16
+Ed25519 or RSA keys. The deployed TV has the owner's Ed25519 and RSA keys plus
+a dedicated local automation key:
 
 ```sh
-cat ~/.ssh/id_ed25519.pub ~/.ssh/id_rsa.pub > authorized_keys
+cat ~/.ssh/id_ed25519.pub ~/.ssh/id_rsa.pub ~/.ssh/ginza_bot_ed25519.pub \
+  > authorized_keys
 ```
 
 Install the APK and provision the key file:
@@ -92,9 +94,9 @@ Reboot to exercise the persistent path:
 adb -s 10.10.8.53:5555 reboot
 ```
 
-Fire OS delivers `BOOT_COMPLETED` through a long ordered queue. The app then
-waits 75 seconds for boot services. Root and SSH normally appear two to four
-minutes after ADB reconnects. Check without starting another attempt:
+The direct-boot receiver handles `LOCKED_BOOT_COMPLETED`, then waits 75 seconds
+for boot services. Root and SSH normally appear about two minutes after startup.
+Check without starting another attempt:
 
 ```sh
 adb -s 10.10.8.53:5555 shell getenforce
@@ -122,6 +124,34 @@ CapEff: 000001ffffffffff
 CapBnd: 000001ffffffffff
 CapAmb: 000001ffffffffff
 ```
+
+## Debloat and update blocking
+
+The deployed TV uses LTvLauncher as HOME and keeps Netflix, Jellyfin, AirPlay,
+the tuner/operator app, Files, QuickSettings, and the root service available.
+The persistent policy disables 68 Amazon OTA, launcher, advertising,
+recommendation, retail, telemetry, Alexa, smart-home, and synchronization
+targets. It also stops `update_engine` at every successful root startup.
+
+`com.amazon.vizzini` and `com.amazon.imp` declare themselves persistent and
+restart when merely disabled. The policy removes them for Android user 0 while
+leaving their read-only system APKs intact for restoration. The locked AVB boot
+chain and system partitions remain unchanged.
+
+The current setup uses the local automation key and a pinned SSH host key:
+
+```sh
+ADB_SERVER_PORT=5038 ./debloat/apply.sh
+```
+
+Restore the stock packages, resume `update_engine`, and select Amazon's HOME:
+
+```sh
+ADB_SERVER_PORT=5038 ./debloat/restore.sh
+```
+
+See [`debloat/README.md`](debloat/README.md) for the policy contents,
+configuration variables, and recovery details.
 
 ## Local recovery shell
 
