@@ -39,6 +39,8 @@ state files and stock environment backup, creates the cache-warming extent
 layout, and emits:
 
 - `uenv-fastboot.img`: the 16 MiB candidate written to `uenv` while unmounted.
+- `fastboot-unlock-probe-mscript.img`: a scratch-RAM write and compare that is
+  accepted only after the lockdown patch is active.
 - `uenv-restore-mscript.img`: a 32 MiB Fastboot payload containing a script at
   `0x30000000` and the exact stock partition at `0x31000000`.
 - `uenv-clean.img` and `uenv-layout.img`: review inputs for byte-level checks.
@@ -101,13 +103,22 @@ bootloader/ginza-unlock.sh boot-prepared \
   bootloader/bundles/first-hardware-run
 ```
 
-After the TV reaches Fastboot, connect the cable and run the proof. An accepted
-`mscript` flash demonstrates that the RAM lockdown patch is active. The script
-restores the exact stock image and compares every byte before Fastboot reports
-success:
+After the TV reaches Fastboot, connect the cable and run the RAM-only proof. An
+accepted `mscript` flash demonstrates that the lockdown patch is active. The
+script writes two words in scratch RAM, compares them, and returns without
+writing storage:
 
 ```sh
-bootloader/ginza-unlock.sh prove-and-restore \
+bootloader/ginza-unlock.sh prove-unlocked \
+  bootloader/bundles/first-hardware-run
+```
+
+After the unlock proof succeeds, restore the exact stock image. The restore
+script reads the complete partition back and compares every byte before
+Fastboot reports success:
+
+```sh
+bootloader/ginza-unlock.sh restore-stock \
   bootloader/bundles/first-hardware-run
 ```
 
@@ -123,6 +134,8 @@ vendor `mscript` pseudo-partition:
 ```sh
 bootloader/fastboot-host.sh devices
 bootloader/fastboot-host.sh getvar all
+bootloader/fastboot-host.sh flash mscript \
+  /path/to/new-bundle/fastboot-unlock-probe-mscript.img
 bootloader/fastboot-host.sh flash mscript \
   /path/to/new-bundle/uenv-restore-mscript.img
 ```

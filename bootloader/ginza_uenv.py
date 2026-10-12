@@ -64,6 +64,14 @@ MBOOT_ASSERTIONS = {
 
 RESTORE_IMAGE_ADDRESS = 0x31000000
 RESTORE_READBACK_ADDRESS = 0x32000000
+PROBE_SCRATCH_ADDRESS = 0x32000000
+PROBE_SCRIPT = (
+    b"echo GINZA-FASTBOOT-UNLOCK-BEGIN\n"
+    b"mw.l 0x32000000 0x474e5a41 0x1\n"
+    b"mw.l 0x32000004 0x474e5a41 0x1\n"
+    b"cmp.l 0x32000000 0x32000004 0x1\n"
+    b"echo GINZA-FASTBOOT-UNLOCK-VERIFIED\n\0"
+)
 RESTORE_SCRIPT = (
     b"echo GINZA-UENV-RESTORE-BEGIN\n"
     b"partition write mmc 0 uenv 0x31000000 0x1000000\n"
@@ -619,6 +627,7 @@ def build_bundle(mboot: Path, stock_path: Path, output: Path) -> dict[str, objec
     clean_path = output / "uenv-clean.img"
     layout_path = output / "uenv-layout.img"
     candidate_path = output / "uenv-fastboot.img"
+    probe_path = output / "fastboot-unlock-probe-mscript.img"
     restore_path = output / "uenv-restore-mscript.img"
     manifest_path = output / "manifest.json"
     fsck_log_path = output / "e2fsck.log"
@@ -648,6 +657,7 @@ def build_bundle(mboot: Path, stock_path: Path, output: Path) -> dict[str, objec
     layout = layout_path.read_bytes()
     candidate = patch_layout(layout, layout_info)
     write_new(candidate_path, candidate)
+    write_new(probe_path, PROBE_SCRIPT)
     restore = build_restore_image(stock)
     write_new(restore_path, restore)
 
@@ -657,7 +667,7 @@ def build_bundle(mboot: Path, stock_path: Path, output: Path) -> dict[str, objec
     preserved_inodes = compare_preserved(base_image, candidate_image)
 
     manifest: dict[str, object] = {
-        "format": 1,
+        "format": 2,
         "target": {
             "model": "AFTHU71990",
             "device": "ginza",
@@ -686,6 +696,11 @@ def build_bundle(mboot: Path, stock_path: Path, output: Path) -> dict[str, objec
                 "size": UENV_SIZE,
                 "sha256": sha256_file(candidate_path),
             },
+            "probe": {
+                "path": probe_path.name,
+                "size": len(PROBE_SCRIPT),
+                "sha256": sha256_file(probe_path),
+            },
             "restore": {
                 "path": restore_path.name,
                 "size": 2 * UENV_SIZE,
@@ -710,6 +725,10 @@ def build_bundle(mboot: Path, stock_path: Path, output: Path) -> dict[str, objec
             "saved_return_address": f"0x{SAVED_RETURN_ADDRESS:x}",
             "unlink_fd": f"0x{UNLINK_FD:x}",
             "unlink_bk": f"0x{UNLINK_BK:x}",
+        },
+        "fastboot_probe": {
+            "script": PROBE_SCRIPT.rstrip(b"\0").decode("ascii"),
+            "scratch_address": f"0x{PROBE_SCRATCH_ADDRESS:x}",
         },
         "restore": {
             "script": RESTORE_SCRIPT.rstrip(b"\0").decode("ascii"),
@@ -765,14 +784,14 @@ def verify_bundle(
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise BundleError(f"cannot read manifest {manifest_path}: {exc}") from exc
-    if manifest.get("format") != 1:
+    if manifest.get("format") != 2:
         raise BundleError("unsupported manifest format")
     files = manifest.get("files")
     if not isinstance(files, dict):
         raise BundleError("manifest files section is invalid")
 
     paths: dict[str, Path] = {}
-    for name in ("clean", "layout", "candidate", "restore"):
+    for name in ("clean", "layout", "candidate", "probe", "restore"):
         path = manifest_file(bundle, manifest, name)
         verify_file_entry(path, files.get(name), name)
         paths[name] = path
@@ -783,6 +802,10 @@ def verify_bundle(
     stock = read_exact(stock_path, UENV_SIZE, "stock image")
     clean = read_exact(paths["clean"], UENV_SIZE, "clean image")
     candidate = read_exact(paths["candidate"], UENV_SIZE, "candidate image")
+    try:
+        probe = paths["probe"].read_bytes()
+    except OSError as exc:
+        raise BundleError(f"cannot read Fastboot probe image: {exc}") from exc
     restore = read_exact(paths["restore"], 2 * UENV_SIZE, "restore image")
     Ext4Image(stock, "stock image")
     clean_image = Ext4Image(clean, "clean image")
@@ -801,6 +824,15 @@ def verify_bundle(
         preserved = filesystem.get("preserved_files")
         if not isinstance(preserved, dict) or preserved.get(path) != metadata:
             raise BundleError(f"preserved file {path} does not match the manifest")
+
+    if probe != PROBE_SCRIPT:
+        raise BundleError("Fastboot probe image has the wrong mscript")
+    fastboot_probe = manifest.get("fastboot_probe")
+    if not isinstance(fastboot_probe, dict) or fastboot_probe != {
+        "script": PROBE_SCRIPT.rstrip(b"\0").decode("ascii"),
+        "scratch_address": f"0x{PROBE_SCRATCH_ADDRESS:x}",
+    }:
+        raise BundleError("Fastboot probe manifest is invalid")
 
     if restore[: len(RESTORE_SCRIPT)] != RESTORE_SCRIPT:
         raise BundleError("restore image has the wrong mscript")
@@ -821,7 +853,7 @@ def print_manifest_summary(manifest: dict[str, object], bundle: Path) -> None:
     files = manifest["files"]
     assert isinstance(files, dict)
     print(f"verified bundle: {bundle}")
-    for name in ("stock", "clean", "candidate", "restore"):
+    for name in ("stock", "clean", "candidate", "probe", "restore"):
         entry = files[name]
         assert isinstance(entry, dict)
         print(f"{name:9s} {entry['sha256']}  {entry['size']} bytes")

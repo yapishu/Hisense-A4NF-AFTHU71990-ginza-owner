@@ -38,7 +38,8 @@ usage: $0 preflight
        $0 probe-stock-fastboot
        $0 prepare RUN_DIRECTORY
        $0 boot-prepared RUN_DIRECTORY
-       $0 prove-and-restore RUN_DIRECTORY
+       $0 prove-unlocked RUN_DIRECTORY
+       $0 restore-stock RUN_DIRECTORY
        $0 abort-prepared RUN_DIRECTORY
 EOF
   exit 2
@@ -360,36 +361,62 @@ boot_prepared() {
   printf '%s\n' \
     'Candidate boot requested.' \
     'Connect the USB data cable only after the TV reaches Fastboot, then run:' \
-    "  $0 prove-and-restore $run_dir"
+    "  $0 prove-unlocked $run_dir"
 }
 
-prove_and_restore() {
+prove_unlocked() {
   [ "$#" -eq 1 ] || usage
   run_dir=$1
   require_host_tools
   verify_bundle "$run_dir"
   serial=$(fastboot_serial)
-  log="$run_dir/unlocked-fastboot-proof.log"
-  [ ! -e "$run_dir/restored" ] || die "this run already has a successful restore proof"
-  log_tmp="$run_dir/.unlocked-fastboot-proof.$$"
+  log="$run_dir/fastboot-unlock-proof.log"
+  marker="$run_dir/unlocked"
+  [ ! -e "$marker" ] || die "this run already has a successful unlock proof"
+  log_tmp="$run_dir/.fastboot-unlock-proof.$$"
   printf 'fastboot_serial=%s\n' "$serial" >"$log_tmp"
   if ! "$fastboot" getvar all >>"$log_tmp" 2>&1; then
     cat "$log_tmp" >&2
-    mv "$log_tmp" "$run_dir/unlocked-fastboot-proof.failed.log"
-    die "the unlocked Fastboot getvar probe failed"
+    mv "$log_tmp" "$run_dir/fastboot-unlock-proof.failed.log"
+    die "the Fastboot getvar probe failed"
   fi
+  if ! "$fastboot" flash mscript \
+      "$run_dir/bundle/fastboot-unlock-probe-mscript.img" >>"$log_tmp" 2>&1; then
+    cat "$log_tmp" >&2
+    mv "$log_tmp" "$run_dir/fastboot-unlock-proof.failed.log"
+    die "Fastboot rejected the RAM-only unlock probe"
+  fi
+  mv "$log_tmp" "$log"
+  cat "$log"
+  printf 'proof_sha256=%s\n' "$(file_sha "$log")" >"$marker"
+  printf '%s\n' \
+    'Unlocked Fastboot accepted and completed the scratch-RAM mscript probe.' \
+    'No storage was written. Leave the TV in Fastboot and run:' \
+    "  $0 restore-stock $run_dir"
+}
+
+restore_stock() {
+  [ "$#" -eq 1 ] || usage
+  run_dir=$1
+  require_host_tools
+  verify_bundle "$run_dir"
+  serial=$(fastboot_serial)
+  log="$run_dir/fastboot-stock-restore.log"
+  marker="$run_dir/restored"
+  [ ! -e "$marker" ] || die "this run already has a successful stock restore"
+  log_tmp="$run_dir/.fastboot-stock-restore.$$"
+  printf 'fastboot_serial=%s\n' "$serial" >"$log_tmp"
   if ! "$fastboot" flash mscript \
       "$run_dir/bundle/uenv-restore-mscript.img" >>"$log_tmp" 2>&1; then
     cat "$log_tmp" >&2
-    mv "$log_tmp" "$run_dir/unlocked-fastboot-proof.failed.log"
+    mv "$log_tmp" "$run_dir/fastboot-stock-restore.failed.log"
     die "Fastboot did not complete the verified stock restore"
   fi
   mv "$log_tmp" "$log"
   cat "$log"
-  printf 'proof_sha256=%s\n' "$(file_sha "$log")" >"$run_dir/restored"
+  printf 'proof_sha256=%s\n' "$(file_sha "$log")" >"$marker"
   printf '%s\n' \
-    'Unlocked Fastboot accepted the verified rollback script.' \
-    'The script restored and compared the complete stock uenv partition.' \
+    'The Fastboot script restored and compared the complete stock uenv partition.' \
     'Leave the TV in Fastboot, disconnect the USB data cable, and power-cycle the TV.'
 }
 
@@ -434,7 +461,8 @@ case "$action" in
     ;;
   prepare) prepare_candidate "$@" ;;
   boot-prepared) boot_prepared "$@" ;;
-  prove-and-restore) prove_and_restore "$@" ;;
+  prove-unlocked) prove_unlocked "$@" ;;
+  restore-stock) restore_stock "$@" ;;
   abort-prepared) abort_prepared "$@" ;;
   *) usage ;;
 esac
