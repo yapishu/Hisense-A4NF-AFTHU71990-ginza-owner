@@ -1,0 +1,6 @@
+*.apk
+*.keystore
+*.log
+*.pid
+*.tmp
+.DS_Store

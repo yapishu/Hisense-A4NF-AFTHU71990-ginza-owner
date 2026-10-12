@@ -1,0 +1,74 @@
+{
+  "product": {
+    "model": "AFTHU71990",
+    "oem_model": "TOSHIBA_40V35RU",
+    "device": "ginza",
+    "variant": "ginza-hh",
+    "hardware": "mt5896",
+    "platform": "merak",
+    "architecture": "armv7l"
+  },
+  "firmware": {
+    "build": "RS8180.3729N",
+    "incremental": "0032280318340",
+    "system_fingerprint": "Amazon/ginza/ginza:11/RS8180.3729N/0032280318340:user/amz-p,release-keys",
+    "boot_fingerprint": "Amazon/ginza/ginza:11/RS8180.3729N/0032280318208:user/amz-p,release-keys",
+    "security_patch": "2025-12-01"
+  },
+  "kernel": {
+    "release": "5.15.180-android13-8-g0d8b47e36fe4-dirty",
+    "page_offset": "0xc0000000",
+    "phys_offset": "0x26000000",
+    "lowmem_end": "0x42a00000",
+    "symbols": {
+      "commit_creds": "0xc0165cd8",
+      "prepare_kernel_cred": "0xc01661f0",
+      "init_thread_union": "0xc1e00000",
+      "init_task": "0xc1e10680",
+      "init_cred": "0xc1e19170",
+      "selinux_state": "0xc210b9d8"
+    },
+    "task_struct": {
+      "size": 2112,
+      "stack": 4,
+      "tasks": 872,
+      "tasks_prev": 876,
+      "pid": 1040,
+      "tgid": 1044,
+      "real_cred": 1316,
+      "cred": 1320,
+      "comm": 1328,
+      "seccomp": 1440
+    },
+    "cred": {
+      "size": 128,
+      "uid": 4,
+      "gid": 8,
+      "suid": 12,
+      "sgid": 16,
+      "euid": 20,
+      "egid": 24,
+      "fsuid": 28,
+      "fsgid": 32,
+      "cap_permitted": 48,
+      "cap_effective": 56,
+      "cap_bset": 64,
+      "security": 100
+    }
+  },
+  "gpu": {
+    "driver": "Mali kbase r39p0",
+    "api": "11.35",
+    "exploit": "CVE-2022-38181"
+  },
+  "artifacts": {
+    "vmlinux_btf_sha256": "d375c995df91e2552ca9b21bcad477db88dce2ffb296c6ea5ffdc2d7d713abbf",
+    "kernel_config_sha256": "3660df7ec8c3a39ef3d69ca9ac4bd836d3768a095857feef92d6c31aaa8355ed"
+  },
+  "boot_chain": {
+    "verified_boot": "AVB 1.1",
+    "state": "locked",
+    "verifiedbootstate": "green",
+    "active_slot": "_b"
+  }
+}
