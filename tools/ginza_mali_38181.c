@@ -40,6 +40,7 @@
 
 #define _GNU_SOURCE
 
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -182,6 +183,7 @@ static const uint32_t g52_copy_shader[G52_COPY_SHADER_WORDS] = {
 #define ROOT_SOCKET_NAME "ginza-root"
 #define ROOT_SSH_EXECUTABLE_ENV "GINZA_DROPBEAR"
 #define ROOT_STATE_DIRECTORY_ENV "GINZA_STATE_DIR"
+#define ROOT_DEBLOAT_POLICY_ENV "GINZA_DEBLOAT_POLICY"
 #define ROOT_DEFAULT_SSH_DIRECTORY "/data/local/tmp/ginza-ssh"
 #define ROOT_DEFAULT_PROOF_PATH "/data/local/tmp/ginza-root-proof.txt"
 #define ROOT_PATH_MAX 512U
@@ -195,6 +197,8 @@ static const uint32_t g52_copy_shader[G52_COPY_SHADER_WORDS] = {
 #define ROOT_CACHE_EVICTION_BYTES (32U * 1024U * 1024U)
 #define ROOT_CACHE_LINE_BYTES 64U
 #define ROOT_CACHE_EVICTION_ATTEMPTS 16U
+#define ROOT_DEBLOAT_LINE_MAX 512U
+#define ROOT_DEBLOAT_MAX_ENTRIES 256U
 #define TARGET_PROPERTY_MAX 256U
 #define TARGET_DEVICE "ginza"
 #define TARGET_VARIANT "ginza-hh"
@@ -2652,6 +2656,188 @@ static pid_t start_root_ssh(const struct root_paths *paths) {
   return -1;
 }
 
+static char *trim_debloat_policy_line(char *line) {
+  char *end;
+
+  while (*line && isspace((unsigned char)*line))
+    line++;
+  end = line + strlen(line);
+  while (end > line && isspace((unsigned char)end[-1]))
+    *--end = '\0';
+  return line;
+}
+
+static bool debloat_policy_entry_is_valid(const char *entry) {
+  const unsigned char *cursor = (const unsigned char *)entry;
+  unsigned int slashes = 0;
+
+  if (!*cursor || *cursor == '/')
+    return false;
+  for (; *cursor; cursor++) {
+    if (*cursor == '/') {
+      slashes++;
+      if (slashes > 1U || cursor[1] == '\0')
+        return false;
+      continue;
+    }
+    if (!isalnum(*cursor) && *cursor != '_' && *cursor != '.' && *cursor != '$')
+      return false;
+  }
+  return true;
+}
+
+static bool wait_for_policy_command(pid_t child, const char *description) {
+  unsigned int attempt;
+
+  for (attempt = 0; attempt < 200U; attempt++) {
+    int status;
+    pid_t result = waitpid(child, &status, WNOHANG);
+
+    if (result == child) {
+      if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
+        return true;
+      fprintf(stderr, "[-] %s exited unsuccessfully (status=%d)\n", description,
+              status);
+      return false;
+    }
+    if (result < 0 && errno != EINTR) {
+      fprintf(stderr, "[-] wait for %s: %s\n", description, strerror(errno));
+      return false;
+    }
+    usleep(50000);
+  }
+
+  fprintf(stderr, "[-] %s exceeded its 10-second limit\n", description);
+  if (kill(child, SIGKILL) < 0 && errno != ESRCH)
+    fprintf(stderr, "[-] stop %s: %s\n", description, strerror(errno));
+  while (waitpid(child, NULL, 0) < 0 && errno == EINTR)
+    ;
+  return false;
+}
+
+static bool disable_debloat_policy_entry(const char *entry) {
+  const bool component = strchr(entry, '/') != NULL;
+  pid_t child = fork();
+
+  if (child < 0) {
+    fprintf(stderr, "[-] fork package manager for %s: %s\n", entry,
+            strerror(errno));
+    return false;
+  }
+  if (child == 0) {
+    if (!prepare_root_shell_capabilities())
+      _exit(126);
+    execl("/system/bin/pm", "pm", component ? "disable" : "disable-user",
+          "--user", "0", entry, (char *)NULL);
+    dprintf(STDERR_FILENO, "exec package manager for %s: %s\n", entry,
+            strerror(errno));
+    _exit(127);
+  }
+  if (!wait_for_policy_command(child, entry))
+    return false;
+  if (component)
+    return true;
+
+  child = fork();
+  if (child < 0) {
+    fprintf(stderr, "[-] fork activity manager for %s: %s\n", entry,
+            strerror(errno));
+    return false;
+  }
+  if (child == 0) {
+    if (!prepare_root_shell_capabilities())
+      _exit(126);
+    execl("/system/bin/am", "am", "force-stop", "--user", "0", entry,
+          (char *)NULL);
+    dprintf(STDERR_FILENO, "exec activity manager for %s: %s\n", entry,
+            strerror(errno));
+    _exit(127);
+  }
+  return wait_for_policy_command(child, entry);
+}
+
+static bool freeze_update_engine(void) {
+  pid_t child = fork();
+
+  if (child < 0) {
+    fprintf(stderr, "[-] fork update-engine freeze: %s\n", strerror(errno));
+    return false;
+  }
+  if (child == 0) {
+    if (!prepare_root_shell_capabilities())
+      _exit(126);
+    execl("/system/bin/toybox", "toybox", "killall", "-STOP", "update_engine",
+          (char *)NULL);
+    dprintf(STDERR_FILENO, "exec update-engine freeze: %s\n", strerror(errno));
+    _exit(127);
+  }
+  return wait_for_policy_command(child, "update-engine freeze");
+}
+
+static void apply_debloat_policy(void) {
+  const char *path = getenv(ROOT_DEBLOAT_POLICY_ENV);
+  struct stat status;
+  FILE *policy;
+  char line[ROOT_DEBLOAT_LINE_MAX];
+  unsigned int count = 0;
+  unsigned int applied = 0;
+
+  if (!path || !path[0]) {
+    printf("[*] %s is unset; no debloat policy is active\n",
+           ROOT_DEBLOAT_POLICY_ENV);
+    return;
+  }
+  if (lstat(path, &status) < 0 || !S_ISREG(status.st_mode) ||
+      status.st_size <= 0 || status.st_size > 64 * 1024) {
+    fprintf(stderr, "[-] invalid debloat policy %s\n", path);
+    return;
+  }
+  policy = fopen(path, "re");
+  if (!policy) {
+    fprintf(stderr, "[-] open debloat policy %s: %s\n", path, strerror(errno));
+    return;
+  }
+
+  while (fgets(line, sizeof(line), policy)) {
+    const char *entry;
+
+    if (!strchr(line, '\n') && !feof(policy)) {
+      fprintf(stderr, "[-] debloat policy contains an overlong line\n");
+      fclose(policy);
+      return;
+    }
+    entry = trim_debloat_policy_line(line);
+    if (!entry[0] || entry[0] == '#')
+      continue;
+    if (!debloat_policy_entry_is_valid(entry) ||
+        ++count > ROOT_DEBLOAT_MAX_ENTRIES) {
+      fprintf(stderr, "[-] invalid debloat policy entry: %s\n", entry);
+      fclose(policy);
+      return;
+    }
+  }
+  if (ferror(policy) || count == 0U) {
+    fprintf(stderr, "[-] debloat policy is empty or unreadable\n");
+    fclose(policy);
+    return;
+  }
+  rewind(policy);
+
+  while (fgets(line, sizeof(line), policy)) {
+    const char *entry = trim_debloat_policy_line(line);
+
+    if (!entry[0] || entry[0] == '#')
+      continue;
+    if (disable_debloat_policy_entry(entry))
+      applied++;
+  }
+  fclose(policy);
+  printf("[+] persistent debloat policy applied to %u/%u entries\n", applied,
+         count);
+  if (freeze_update_engine())
+    printf("[+] idle Android update engine frozen\n");
+}
+
 static _Noreturn void serve_root_shells(int listener) {
   if (signal(SIGCHLD, SIG_IGN) == SIG_ERR)
     fprintf(stderr, "[-] SIGCHLD setup: %s\n", strerror(errno));
@@ -2873,6 +3059,7 @@ static _Noreturn void run_root_service_child(const struct root_paths *paths,
   if (!protect_root_process())
     root_child_failure(status_fd, "protect root process");
 
+  apply_debloat_policy();
   listener = create_root_socket();
   if (listener < 0)
     root_child_failure(status_fd, "create root socket");
@@ -3239,6 +3426,7 @@ static bool run_root_server(struct mali_context *primary,
     return false;
   }
 
+  apply_debloat_policy();
   listener = create_root_socket();
   if (listener < 0) {
     fprintf(stderr, "[-] create root socket: %s\n", strerror(errno));

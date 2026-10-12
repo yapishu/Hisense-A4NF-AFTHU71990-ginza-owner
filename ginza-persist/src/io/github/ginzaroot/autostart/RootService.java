@@ -28,17 +28,21 @@ public final class RootService extends Service {
     public static final String EXTRA_MODE = "mode";
     public static final String EXTRA_IMMEDIATE = "immediate";
     public static final String EXTRA_AUTHORIZED_KEYS = "authorizedKeys";
+    public static final String EXTRA_DEBLOAT_PACKAGES = "debloatPackages";
     public static final String MODE_ROOT_SERVER = "root-server";
     public static final String MODE_PROVISION_KEYS = "provision-keys";
+    public static final String MODE_PROVISION_DEBLOAT = "provision-debloat";
+    public static final String MODE_CLEAR_DEBLOAT = "clear-debloat";
     public static final String MODE_DUMP_LOG = "dump-log";
 
     private static final String TAG = "GinzaRoot";
     private static final String CHANNEL_ID = "ginza-root";
     private static final int NOTIFICATION_ID = 38181;
     private static final long BOOT_DELAY_MILLIS = 75_000L;
+    private static final String DEBLOAT_POLICY_FILE = "debloat-packages";
     private static final Set<String> ALLOWED_MODES = new HashSet<>(Arrays.asList(
             "target-check", "credential-smoke", "smoke", "compute-smoke", MODE_ROOT_SERVER,
-            MODE_PROVISION_KEYS, MODE_DUMP_LOG));
+            MODE_PROVISION_KEYS, MODE_PROVISION_DEBLOAT, MODE_CLEAR_DEBLOAT, MODE_DUMP_LOG));
 
     private final AtomicBoolean launched = new AtomicBoolean(false);
     private volatile Process rootProcess;
@@ -73,24 +77,41 @@ public final class RootService extends Service {
             reader.start();
             return START_NOT_STICKY;
         }
+        final String selectedMode = mode;
+        final String authorizedKeys = intent == null
+                ? null
+                : intent.getStringExtra(EXTRA_AUTHORIZED_KEYS);
+        final String debloatPackages = intent == null
+                ? null
+                : intent.getStringExtra(EXTRA_DEBLOAT_PACKAGES);
+        if (MODE_PROVISION_KEYS.equals(selectedMode)
+                || MODE_PROVISION_DEBLOAT.equals(selectedMode)
+                || MODE_CLEAR_DEBLOAT.equals(selectedMode)) {
+            Thread configuration = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    if (MODE_PROVISION_KEYS.equals(selectedMode)) {
+                        provisionAuthorizedKeys(authorizedKeys, startId);
+                    } else if (MODE_PROVISION_DEBLOAT.equals(selectedMode)) {
+                        provisionDebloatPolicy(debloatPackages, startId);
+                    } else {
+                        clearDebloatPolicy(startId);
+                    }
+                }
+            }, "ginza-configuration");
+            configuration.start();
+            return START_NOT_STICKY;
+        }
         if (!launched.compareAndSet(false, true)) {
             Log.i(TAG, "A native process is already associated with this service instance");
             return START_NOT_STICKY;
         }
 
-        final String selectedMode = mode;
-        final String authorizedKeys = intent == null
-                ? null
-                : intent.getStringExtra(EXTRA_AUTHORIZED_KEYS);
         final long delay = immediate || !MODE_ROOT_SERVER.equals(mode) ? 0L : BOOT_DELAY_MILLIS;
         Thread launcher = new Thread(new Runnable() {
             @Override
             public void run() {
-                if (MODE_PROVISION_KEYS.equals(selectedMode)) {
-                    provisionAuthorizedKeys(authorizedKeys, startId);
-                } else {
-                    launch(selectedMode, delay, startId);
-                }
+                launch(selectedMode, delay, startId);
             }
         }, "ginza-launcher");
         launcher.start();
@@ -129,6 +150,11 @@ public final class RootService extends Service {
                 builder.environment().put("GINZA_DROPBEAR", dropbear.getAbsolutePath());
                 builder.environment().put("GINZA_STATE_DIR",
                         new File(files, "ssh").getAbsolutePath());
+                File debloatPolicy = new File(files, DEBLOAT_POLICY_FILE);
+                if (debloatPolicy.isFile()) {
+                    builder.environment().put("GINZA_DEBLOAT_POLICY",
+                            debloatPolicy.getAbsolutePath());
+                }
             } else {
                 builder = new ProcessBuilder(executable.getAbsolutePath(), mode);
             }
@@ -186,6 +212,62 @@ public final class RootService extends Service {
             Log.e(TAG, "Cannot provision SSH keys", error);
             updateNotification("Key provisioning failed: " + error.getMessage());
         } finally {
+            finishConfiguration(startId);
+        }
+    }
+
+    private void provisionDebloatPolicy(String encoded, int startId) {
+        try {
+            if (encoded == null || encoded.isEmpty()) {
+                throw new IOException("No debloat package policy was supplied");
+            }
+            byte[] policy;
+            try {
+                policy = Base64.decode(encoded, Base64.DEFAULT);
+            } catch (IllegalArgumentException error) {
+                throw new IOException("Debloat policy is not valid Base64", error);
+            }
+            validateDebloatPolicy(policy);
+
+            File files = createDeviceProtectedStorageContext().getFilesDir();
+            if (!files.isDirectory() && !files.mkdirs()) {
+                throw new IOException("Cannot create " + files);
+            }
+            File target = new File(files, DEBLOAT_POLICY_FILE);
+            try (FileOutputStream output = new FileOutputStream(target, false)) {
+                output.write(policy);
+                output.getFD().sync();
+            }
+            Os.chmod(target.getAbsolutePath(), 0600);
+            Log.i(TAG, "Provisioned debloat policy sha256=" + sha256(policy));
+            updateNotification("Debloat policy provisioned");
+        } catch (Exception error) {
+            Log.e(TAG, "Cannot provision debloat policy", error);
+            updateNotification("Debloat provisioning failed: " + error.getMessage());
+        } finally {
+            finishConfiguration(startId);
+        }
+    }
+
+    private void clearDebloatPolicy(int startId) {
+        try {
+            File target = new File(createDeviceProtectedStorageContext().getFilesDir(),
+                    DEBLOAT_POLICY_FILE);
+            if (target.exists() && !target.delete()) {
+                throw new IOException("Cannot delete " + target);
+            }
+            Log.i(TAG, "Cleared debloat policy");
+            updateNotification("Debloat policy cleared");
+        } catch (IOException | RuntimeException error) {
+            Log.e(TAG, "Cannot clear debloat policy", error);
+            updateNotification("Debloat clear failed: " + error.getMessage());
+        } finally {
+            finishConfiguration(startId);
+        }
+    }
+
+    private void finishConfiguration(int startId) {
+        if (!launched.get()) {
             stopSelf(startId);
         }
     }
@@ -232,6 +314,30 @@ public final class RootService extends Service {
         }
         if (count == 0 || count > 16) {
             throw new IOException("Authorized keys must contain between 1 and 16 keys");
+        }
+    }
+
+    private static void validateDebloatPolicy(byte[] policy) throws IOException {
+        if (policy.length == 0 || policy.length > 64 * 1024) {
+            throw new IOException("Debloat policy size is outside the accepted range");
+        }
+        String text = new String(policy, StandardCharsets.UTF_8);
+        if (text.indexOf('\0') >= 0) {
+            throw new IOException("Debloat policy contains a NUL byte");
+        }
+        int count = 0;
+        for (String rawLine : text.split("\\r?\\n")) {
+            String line = rawLine.trim();
+            if (line.isEmpty() || line.startsWith("#")) {
+                continue;
+            }
+            if (!line.matches("[A-Za-z0-9_.$]+(?:/[A-Za-z0-9_.$]+)?")) {
+                throw new IOException("Invalid package or component in debloat policy: " + line);
+            }
+            count++;
+        }
+        if (count == 0 || count > 256) {
+            throw new IOException("Debloat policy must contain between 1 and 256 entries");
         }
     }
 

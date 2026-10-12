@@ -1,0 +1,4 @@
+# Fire OS starts these persistent applications even when they are disabled.
+# Removing them for user 0 leaves their read-only system APKs available for restore.
+com.amazon.vizzini
+com.amazon.imp
