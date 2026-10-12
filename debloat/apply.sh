@@ -3,7 +3,6 @@ set -eu
 
 project_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 policy=${GINZA_DEBLOAT_POLICY:-$project_dir/packages.txt}
-uninstall_policy=${GINZA_UNINSTALL_POLICY:-$project_dir/uninstall-packages.txt}
 launcher=${GINZA_LAUNCHER_APK:-$project_dir/LTvLauncher-armeabi-v7a-release.apk}
 youtube=${GINZA_YOUTUBE_APK:-$project_dir/YouTube-FireTV-25.30.r1.v162.0.apk}
 adb_bin=${ADB:-adb}
@@ -16,7 +15,7 @@ known_hosts=${GINZA_KNOWN_HOSTS:-$HOME/.ssh/ginza_known_hosts}
 service=io.github.ginzaroot.autostart/.RootService
 launcher_component=com.leanbitlab.ltvL/.MainActivity
 
-for path in "$policy" "$uninstall_policy" "$ssh_key" "$known_hosts"; do
+for path in "$policy" "$ssh_key" "$known_hosts"; do
   if [ ! -f "$path" ]; then
     echo "Missing required file: $path" >&2
     exit 1
@@ -60,23 +59,6 @@ awk '
       esac
     done
     toybox killall -STOP update_engine
-  '
-
-awk '
-  { sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, "") }
-  $0 != "" && $0 !~ /^#/ { print }
-' "$uninstall_policy" | ssh \
-  -i "$ssh_key" \
-  -p "$ssh_port" \
-  -o BatchMode=yes \
-  -o IdentitiesOnly=yes \
-  -o StrictHostKeyChecking=yes \
-  -o UserKnownHostsFile="$known_hosts" \
-  "root@$ssh_host" '
-    set -eu
-    while IFS= read -r target; do
-      pm uninstall -k --user 0 "$target"
-    done
   '
 
 "$adb_bin" -P "$adb_server_port" -s "$adb_serial" shell \

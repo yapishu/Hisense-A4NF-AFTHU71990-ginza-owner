@@ -61,12 +61,10 @@ com.amazon.alexadirectivebrokerservice
 com.amazon.alexamediaplayer.runtime.ftv
 com.amazon.tv.alexaalerts
 com.amazon.tv.alexanotifications
-com.amazon.vizzini
 com.amazon.ceviche
 com.amazon.adep
 com.amazon.ale
 com.amazon.aca
-com.amazon.imp
 com.amazon.alta.h2clientservice
 com.amazon.spotify.mediabrowserservice
 com.amazon.smarthomemapviewapp

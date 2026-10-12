@@ -130,14 +130,13 @@ CapAmb: 000001ffffffffff
 The deployed TV uses LTvLauncher as HOME and keeps Netflix, Jellyfin, YouTube,
 YouTube casting, AirPlay, the tuner/operator app, Files, QuickSettings, and the
 root service available.
-The persistent policy disables 68 Amazon OTA, launcher, advertising,
+The persistent policy disables 66 Amazon OTA, launcher, advertising,
 recommendation, retail, telemetry, Alexa, smart-home, and synchronization
 targets. It also stops `update_engine` at every successful root startup.
 
-`com.amazon.vizzini` and `com.amazon.imp` declare themselves persistent and
-restart when merely disabled. The policy removes them for Android user 0 while
-leaving their read-only system APKs intact for restoration. The locked AVB boot
-chain and system partitions remain unchanged.
+`com.amazon.vizzini` and `com.amazon.imp` stay enabled because the Fire OS
+Settings application depends on them. The locked AVB boot chain and system
+partitions remain unchanged.
 
 The current setup uses the local automation key and a pinned SSH host key:
 
@@ -145,7 +144,8 @@ The current setup uses the local automation key and a pinned SSH host key:
 ADB_SERVER_PORT=5038 ./debloat/apply.sh
 ```
 
-Restore the stock packages, resume `update_engine`, and select Amazon's HOME:
+Restore the stock package states, resume `update_engine`, and select Amazon's
+HOME:
 
 ```sh
 ADB_SERVER_PORT=5038 ./debloat/restore.sh
