@@ -4,3 +4,5 @@
 *.pid
 *.tmp
 .DS_Store
+__pycache__/
+bootloader/bundles/

@@ -166,6 +166,14 @@ nc 127.0.0.1 4242
 This path is useful for verification and recovery when SSH configuration is
 unavailable.
 
+## Bootloader entry
+
+[`bootloader/README.md`](bootloader/README.md) documents the exact-target
+preboot entry, filesystem-preserving `uenv` image builder, byte-level verifier,
+host Fastboot wrapper, and full-partition rollback protocol. The tooling checks
+the active mboot image, ext4 allocation, preserved state, control-flow targets,
+cache-maintenance routines, and rollback payload before it permits staging.
+
 ## Remove persistent root
 
 Reboot and uninstall the package immediately after ADB reconnects, before the
