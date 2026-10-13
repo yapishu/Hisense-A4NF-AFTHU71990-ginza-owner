@@ -36,7 +36,9 @@ usage() {
 usage: $0 preflight
        $0 enter-stock-fastboot
        $0 probe-stock-fastboot
+       $0 import-stock-fastboot-proof PROOF_DIRECTORY
        $0 prepare RUN_DIRECTORY
+       $0 export-fastboot-bundle RUN_DIRECTORY OUTPUT_DIRECTORY
        $0 boot-prepared RUN_DIRECTORY
        $0 prove-unlocked RUN_DIRECTORY
        $0 restore-stock RUN_DIRECTORY
@@ -181,6 +183,45 @@ probe_stock_fastboot() {
   printf '%s\n' \
     'Leave the TV in Fastboot, disconnect the USB data cable, and power-cycle the TV.' \
     'Wait for Android and persistent root to return before preparing the candidate.'
+}
+
+import_stock_fastboot_proof() {
+  [ "$#" -eq 1 ] || usage
+  proof_dir=$1
+  require_command awk
+  require_command cp
+  require_command sed
+  require_command sha256sum
+  metadata=$proof_dir/stock-fastboot-proof.env
+  source_log=$proof_dir/stock-fastboot.log
+  [ -f "$metadata" ] || die "Mac proof metadata is missing: $metadata"
+  [ -f "$source_log" ] || die "Mac proof log is missing: $source_log"
+  format=$(sed -n 's/^format=//p' "$metadata")
+  serial=$(sed -n 's/^serial=//p' "$metadata")
+  expected_digest=$(sed -n 's/^log_sha256=//p' "$metadata")
+  [ "$format" = 1 ] || die "unsupported Mac proof format"
+  case "$serial" in
+    ''|*[!A-Za-z0-9._:-]*) die "Mac proof has an invalid Fastboot serial" ;;
+  esac
+  case "$expected_digest" in
+    ''|*[!0-9a-f]*) die "Mac proof has an invalid log SHA-256" ;;
+  esac
+  [ "${#expected_digest}" -eq 64 ] || die "Mac proof has an invalid log SHA-256"
+  [ "$(file_sha "$source_log")" = "$expected_digest" ] || \
+    die "Mac proof log does not match its metadata"
+  [ "$(sed -n '1p' "$source_log")" = "fastboot_serial=$serial" ] || \
+    die "Mac proof log names another Fastboot serial"
+  mkdir -p "$state_dir"
+  log=$(mktemp "$state_dir/stock-fastboot.mac.XXXXXX")
+  cp "$source_log" "$log"
+  marker="$state_dir/stock-fastboot-proven"
+  {
+    printf 'serial=%s\n' "$serial"
+    printf 'probe_sha256=%s\n' "$expected_digest"
+    printf 'probe_log=%s\n' "$log"
+  } >"$marker.tmp"
+  mv "$marker.tmp" "$marker"
+  printf 'Imported verified stock Fastboot transport proof for %s.\n' "$serial"
 }
 
 require_fastboot_proof() {
@@ -337,6 +378,38 @@ prepare_candidate() {
     "  $0 boot-prepared $run_dir"
 }
 
+export_fastboot_bundle() {
+  [ "$#" -eq 2 ] || usage
+  run_dir=$1
+  output=$2
+  require_command cp
+  require_command sha256sum
+  verify_bundle "$run_dir"
+  [ -s "$run_dir/prepared" ] || die "prepared marker is missing from $run_dir"
+  [ ! -e "$output" ] || die "Fastboot export already exists: $output"
+  mkdir -p "$output"
+  cleanup_export() {
+    status=$?
+    trap - EXIT HUP INT TERM
+    [ "$status" -eq 0 ] || rm -rf "$output"
+    exit "$status"
+  }
+  trap cleanup_export EXIT HUP INT TERM
+  cp "$run_dir/bundle/manifest.json" "$output/manifest.json"
+  cp "$run_dir/bundle/fastboot-unlock-probe-mscript.img" "$output/"
+  cp "$run_dir/bundle/uenv-restore-mscript.img" "$output/"
+  (
+    cd "$output"
+    sha256sum \
+      manifest.json \
+      fastboot-unlock-probe-mscript.img \
+      uenv-restore-mscript.img >SHA256SUMS
+  )
+  trap - EXIT HUP INT TERM
+  printf 'Mac Fastboot bundle exported: %s\n' "$output"
+  printf 'Transfer this complete directory to the Mac before booting the candidate.\n'
+}
+
 boot_prepared() {
   [ "$#" -eq 1 ] || usage
   run_dir=$1
@@ -459,7 +532,9 @@ case "$action" in
     [ "$#" -eq 0 ] || usage
     probe_stock_fastboot
     ;;
+  import-stock-fastboot-proof) import_stock_fastboot_proof "$@" ;;
   prepare) prepare_candidate "$@" ;;
+  export-fastboot-bundle) export_fastboot_bundle "$@" ;;
   boot-prepared) boot_prepared "$@" ;;
   prove-unlocked) prove_unlocked "$@" ;;
   restore-stock) restore_stock "$@" ;;

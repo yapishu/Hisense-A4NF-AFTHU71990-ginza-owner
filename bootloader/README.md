@@ -61,6 +61,11 @@ stock image, sizes, and SHA-256 hashes.
 
 ## Hardware workflow
 
+When the USB host is a Mac beside the TV, follow
+[`MACOS.md`](MACOS.md). The Mac performs the physical Fastboot operations while
+this Linux workflow retains the network control, exact image builder, and raw
+rollback source.
+
 `ginza-unlock.sh` drives the live operation as separate, fail-closed phases.
 It uses the pinned SSH host key and automation key, checks the exact model,
 firmware, slot, partition sizes, and active mboot hash, and refuses to prepare a
